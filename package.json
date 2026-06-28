@@ -13,5 +13,8 @@
     "turbo": "^2.5.5",
     "typescript": "^5.9.2",
     "@types/node": "^24.3.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }
