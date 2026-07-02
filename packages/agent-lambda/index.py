@@ -2,11 +2,18 @@
 mini-cursor-agent — AWS Lambda handler
 
 Flow:
-  1. Receive user instruction via API Gateway (Cognito JWT authenticated)
-  2. Log the authenticated Cognito user (sub) as structured JSON to CloudWatch
-  3. Call Amazon Bedrock (Claude 3.5 Sonnet) to generate code
-  4. Create GitHub branch → commit file → open Pull Request
-     (GitHub REST API via urllib.request only — no third-party HTTP libs)
+  POST /agent (API Gateway):
+    1. Issue a unique task_id and return 202 Accepted immediately
+    2. Async self-invoke to continue processing in the background
+    3. Append progress logs to DynamoDB as each step completes
+
+  GET /status?task_id=... (API Gateway):
+    Return current status (processing / success / failed) and log lines from DynamoDB
+
+  Background invocation:
+    1. Call Amazon Bedrock (Claude 3.5 Sonnet) to generate code
+    2. Create GitHub branch → commit file → open Pull Request
+       (GitHub REST API via urllib.request only — no third-party HTTP libs)
 """
 
 import base64
@@ -18,6 +25,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
+from datetime import datetime, timezone
 
 import boto3
 
@@ -34,9 +43,117 @@ _bedrock_region = os.environ.get("BEDROCK_REGION", "us-east-1")
 bedrock = boto3.client(service_name="bedrock-runtime", region_name=_bedrock_region)
 ssm = boto3.client("ssm")
 s3 = boto3.client("s3")
+dynamodb = boto3.resource("dynamodb")
+lambda_client = boto3.client("lambda")
+
+LOGS_TABLE = os.environ.get("LOGS_TABLE", "mini-cursor-logs")
 
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
+
+TASK_STATUS_PROCESSING = "processing"
+TASK_STATUS_SUCCESS = "success"
+TASK_STATUS_FAILED = "failed"
+
+
+# ---------------------------------------------------------------------------
+# DynamoDB task log cache
+# ---------------------------------------------------------------------------
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _logs_table():
+    return dynamodb.Table(LOGS_TABLE)
+
+
+def init_task_record(task_id: str, cognito_sub: str | None, instruction: str, repo: str, file_path: str) -> None:
+    """Create the initial DynamoDB record for a new background task."""
+    table = _logs_table()
+    table.put_item(
+        Item={
+            "task_id": task_id,
+            "status": TASK_STATUS_PROCESSING,
+            "logs": [f"[{_utc_now()}] タスクを受け付けました"],
+            "instruction": instruction,
+            "repo": repo,
+            "file_path": file_path,
+            "cognito_sub": cognito_sub or "",
+            "created_at": _utc_now(),
+            "updated_at": _utc_now(),
+        }
+    )
+
+
+def append_task_log(task_id: str, message: str) -> None:
+    """Append a progress line to the task's log array in DynamoDB."""
+    timestamp = _utc_now()
+    entry = f"[{timestamp}] {message}"
+    table = _logs_table()
+    table.update_item(
+        Key={"task_id": task_id},
+        UpdateExpression=(
+            "SET logs = list_append(if_not_exists(logs, :empty), :entry), "
+            "updated_at = :updated_at"
+        ),
+        ExpressionAttributeValues={
+            ":empty": [],
+            ":entry": [entry],
+            ":updated_at": timestamp,
+        },
+    )
+    logger.info("task_id=%s log: %s", task_id, message)
+
+
+def set_task_status(task_id: str, status: str, result: dict | None = None, error: str | None = None) -> None:
+    """Update the terminal status (success / failed) and optional result payload."""
+    timestamp = _utc_now()
+    update_expr = "SET #status = :status, updated_at = :updated_at"
+    expr_names = {"#status": "status"}
+    expr_values: dict = {
+        ":status": status,
+        ":updated_at": timestamp,
+    }
+
+    if result is not None:
+        update_expr += ", #result = :result"
+        expr_names["#result"] = "result"
+        expr_values[":result"] = result
+
+    if error is not None:
+        update_expr += ", #error = :error"
+        expr_names["#error"] = "error"
+        expr_values[":error"] = error
+
+    table = _logs_table()
+    table.update_item(
+        Key={"task_id": task_id},
+        UpdateExpression=update_expr,
+        ExpressionAttributeNames=expr_names,
+        ExpressionAttributeValues=expr_values,
+    )
+
+
+def get_task_record(task_id: str) -> dict | None:
+    """Fetch a task record from DynamoDB. Returns None if not found."""
+    table = _logs_table()
+    response = table.get_item(Key={"task_id": task_id})
+    return response.get("Item")
+
+
+def invoke_background_task(task_id: str, payload: dict) -> None:
+    """Fire-and-forget async self-invocation so POST /agent can return 202 immediately."""
+    function_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "")
+    if not function_name:
+        raise RuntimeError("AWS_LAMBDA_FUNCTION_NAME is not set")
+
+    event = {"background": True, "task_id": task_id, **payload}
+    lambda_client.invoke(
+        FunctionName=function_name,
+        InvocationType="Event",
+        Payload=json.dumps(event, ensure_ascii=False).encode("utf-8"),
+    )
+    logger.info("Dispatched background task: task_id=%s", task_id)
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +477,7 @@ def create_github_pr(
     code: str,
     token: str,
     instruction: str = "",
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict:
     """
     GitHub PR creation workflow (3 API steps):
@@ -382,17 +500,20 @@ def create_github_pr(
 
     # --- Step 1: Create branch ---
     branch_name = generate_branch_name()
+    if on_progress:
+        on_progress(f"ブランチ作成中: {branch_name}")
     logger.info("Step 1/3: Creating branch %s from %s (%s)", branch_name, default_branch, base_sha)
     create_branch(token, owner, repo_name, branch_name, base_sha)
 
     # --- Step 2: Commit file ---
-    # On a fresh branch the file blob matches default branch; re-fetch sha on new branch if needed
     _, file_sha_on_branch = get_file_content_and_sha(token, owner, repo_name, file_path, branch_name)
     commit_message = f"mini-cursor: {action} {file_path}"
     if instruction:
         truncated = instruction[:72] + ("..." if len(instruction) > 72 else "")
         commit_message = f"mini-cursor: {truncated}"
 
+    if on_progress:
+        on_progress(f"ファイルをコミット中: {file_path}")
     logger.info("Step 2/3: Committing %s to branch %s", file_path, branch_name)
     commit_result = commit_file(
         token=token,
@@ -415,6 +536,8 @@ def create_github_pr(
         f"**File:** `{file_path}`\n"
         f"**Branch:** `{branch_name}` → `{default_branch}`\n"
     )
+    if on_progress:
+        on_progress("PR作成中")
     logger.info("Step 3/3: Creating pull request %s → %s", branch_name, default_branch)
     pr = create_pull_request(
         token=token,
@@ -453,31 +576,26 @@ def save_run_metadata(bucket: str, key: str, metadata: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lambda entry point
+# HTTP route handlers
 # ---------------------------------------------------------------------------
-def handler(event, context):
-    """
-    Expected JSON body:
-      {
-        "instruction": "Add logging to main function",
-        "repo": "owner/repo",          // optional
-        "file_path": "src/main.py"     // optional
-      }
+def _parse_json_body(event: dict) -> dict:
+    raw_body = event.get("body", "{}")
+    if isinstance(raw_body, str):
+        return json.loads(raw_body or "{}")
+    if isinstance(raw_body, dict):
+        return raw_body
+    return {}
 
-    Authentication: Cognito JWT via API Gateway authorizer.
-    The caller's user ID is available at:
-      event['requestContext']['authorizer']['jwt']['claims']['sub']
+
+def handle_post_agent(event: dict, context) -> dict:
+    """
+    Accept a new instruction, persist task metadata to DynamoDB, dispatch
+    background processing, and return 202 immediately.
     """
     cognito_sub = log_authenticated_request(event, context)
 
     try:
-        raw_body = event.get("body", "{}")
-        if isinstance(raw_body, str):
-            body = json.loads(raw_body or "{}")
-        elif isinstance(raw_body, dict):
-            body = raw_body
-        else:
-            body = {}
+        body = _parse_json_body(event)
 
         user_instruction = body.get("instruction", "").strip()
         if not user_instruction:
@@ -487,20 +605,105 @@ def handler(event, context):
         file_path = body.get("file_path") or os.environ.get("DEFAULT_FILE_PATH", "src/main.py")
 
         if repo_name == "your-user/your-repo":
-            return _response(400, {"error": "Set 'repo' to a valid 'owner/repo' in the request body or DEFAULT_REPO env var"})
+            return _response(
+                400,
+                {"error": "Set 'repo' to a valid 'owner/repo' in the request body or DEFAULT_REPO env var"},
+            )
 
+        task_id = str(uuid.uuid4())
+        init_task_record(task_id, cognito_sub, user_instruction, repo_name, file_path)
+
+        invoke_background_task(
+            task_id,
+            {
+                "instruction": user_instruction,
+                "repo": repo_name,
+                "file_path": file_path,
+                "cognito_sub": cognito_sub,
+            },
+        )
+
+        append_task_log(task_id, "バックグラウンド処理を開始しました")
+
+        return _response(
+            202,
+            {
+                "task_id": task_id,
+                "message": "Accepted",
+            },
+        )
+
+    except ValueError as exc:
+        logger.exception("Validation error on POST /agent")
+        return _response(400, {"error": str(exc)})
+    except Exception as exc:
+        logger.exception("Unhandled error on POST /agent")
+        return _response(500, {"error": "Internal server error", "detail": str(exc)})
+
+
+def handle_get_status(event: dict, context) -> dict:
+    """Return task status and accumulated logs from DynamoDB."""
+    log_authenticated_request(event, context)
+
+    query_params = event.get("queryStringParameters") or {}
+    task_id = (query_params.get("task_id") or "").strip()
+
+    if not task_id:
+        return _response(400, {"error": "Missing required query parameter: task_id"})
+
+    record = get_task_record(task_id)
+    if not record:
+        return _response(404, {"error": "Task not found", "task_id": task_id})
+
+    logs = record.get("logs", [])
+    if not isinstance(logs, list):
+        logs = [str(logs)]
+
+    response_body: dict = {
+        "task_id": task_id,
+        "status": record.get("status", TASK_STATUS_PROCESSING),
+        "logs": logs,
+        "updated_at": record.get("updated_at"),
+    }
+
+    if "result" in record:
+        response_body["result"] = record["result"]
+    if "error" in record:
+        response_body["error"] = record["error"]
+
+    return _response(200, response_body)
+
+
+def process_background_task(event: dict, context) -> dict:
+    """Run the full agent workflow and stream progress into DynamoDB."""
+    task_id = event.get("task_id", "")
+    user_instruction = event.get("instruction", "").strip()
+    repo_name = event.get("repo") or os.environ.get("DEFAULT_REPO", "your-user/your-repo")
+    file_path = event.get("file_path") or os.environ.get("DEFAULT_FILE_PATH", "src/main.py")
+    cognito_sub = event.get("cognito_sub")
+
+    if not task_id:
+        logger.error("Background invocation missing task_id")
+        return {"statusCode": 500, "body": "missing task_id"}
+
+    def log_progress(message: str) -> None:
+        append_task_log(task_id, message)
+
+    try:
+        log_progress("GitHubトークンを取得中")
         github_token = get_secret("GITHUB_TOKEN", "GITHUB_TOKEN_SSM")
         owner, repo_part = parse_repo(repo_name)
 
+        log_progress(f"リポジトリ情報を取得中: {repo_name}")
         default_branch = get_default_branch(github_token, owner, repo_part)
         existing_content, _ = get_file_content_and_sha(
             github_token, owner, repo_part, file_path, default_branch
         )
 
+        log_progress("Bedrock呼び出し中")
         generated_code = invoke_bedrock(user_instruction, file_path, existing_content)
-
-        # Strip accidental markdown fences if the model adds them
         generated_code = _strip_markdown_fences(generated_code)
+        log_progress(f"コード生成完了 ({len(generated_code)} 文字)")
 
         pr_result = create_github_pr(
             repo=repo_name,
@@ -508,15 +711,16 @@ def handler(event, context):
             code=generated_code,
             token=github_token,
             instruction=user_instruction,
+            on_progress=log_progress,
         )
 
         workspace_bucket = os.environ.get("WORKSPACE_BUCKET", "")
         if workspace_bucket:
-            run_id = context.aws_request_id if context else str(uuid.uuid4())
             save_run_metadata(
                 workspace_bucket,
-                f"runs/{run_id}.json",
+                f"runs/{task_id}.json",
                 {
+                    "task_id": task_id,
                     "cognito_sub": cognito_sub,
                     "instruction": user_instruction,
                     "repo": repo_name,
@@ -525,30 +729,57 @@ def handler(event, context):
                 },
             )
 
-        return _response(
-            200,
-            {
-                "message": "PR created successfully.",
-                "cognito_sub": cognito_sub,
-                "instruction": user_instruction,
-                "repo": repo_name,
-                "file_path": file_path,
-                **pr_result,
-            },
-        )
+        log_progress(f"PR作成完了: {pr_result.get('pr_url', '(no url)')}")
+        set_task_status(task_id, TASK_STATUS_SUCCESS, result=pr_result)
+
+        return {"statusCode": 200, "body": json.dumps({"task_id": task_id, "status": TASK_STATUS_SUCCESS})}
 
     except GitHubAPIError as exc:
-        logger.exception("GitHub API failure")
-        return _response(
-            exc.status_code if 400 <= exc.status_code < 600 else 502,
-            {"error": "GitHub API error", "detail": str(exc)},
-        )
+        logger.exception("GitHub API failure for task_id=%s", task_id)
+        error_message = f"GitHub API error: {exc}"
+        log_progress(error_message)
+        set_task_status(task_id, TASK_STATUS_FAILED, error=error_message)
+        return {"statusCode": 500, "body": error_message}
+
     except ValueError as exc:
-        logger.exception("Validation error")
-        return _response(400, {"error": str(exc)})
+        logger.exception("Validation error for task_id=%s", task_id)
+        error_message = str(exc)
+        log_progress(f"バリデーションエラー: {error_message}")
+        set_task_status(task_id, TASK_STATUS_FAILED, error=error_message)
+        return {"statusCode": 400, "body": error_message}
+
     except Exception as exc:
-        logger.exception("Unhandled error")
-        return _response(500, {"error": "Internal server error", "detail": str(exc)})
+        logger.exception("Unhandled error for task_id=%s", task_id)
+        error_message = str(exc)
+        log_progress(f"エラー: {error_message}")
+        set_task_status(task_id, TASK_STATUS_FAILED, error=error_message)
+        return {"statusCode": 500, "body": error_message}
+
+
+# ---------------------------------------------------------------------------
+# Lambda entry point
+# ---------------------------------------------------------------------------
+def handler(event, context):
+    """
+    Routes:
+      POST /agent  — accept instruction, return 202 + task_id, process in background
+      GET  /status — poll task_id for status and logs (DynamoDB)
+      background   — async self-invocation payload (event['background'] == True)
+    """
+    if event.get("background"):
+        return process_background_task(event, context)
+
+    http = event.get("requestContext", {}).get("http", {})
+    method = (http.get("method") or "").upper()
+    path = http.get("path") or ""
+
+    if method == "GET" and path == "/status":
+        return handle_get_status(event, context)
+
+    if method == "POST" and path == "/agent":
+        return handle_post_agent(event, context)
+
+    return _response(404, {"error": "Not found", "method": method, "path": path})
 
 
 def _strip_markdown_fences(text: str) -> str:
