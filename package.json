@@ -1,18 +1,11 @@
 {
-  "name": "myagent",
+  "name": "mini-cursor",
   "private": true,
   "packageManager": "pnpm@10.16.1",
   "scripts": {
-    "build": "turbo build",
-    "dev": "turbo dev",
-    "lint": "turbo lint",
-    "test": "turbo test",
-    "check": "turbo check"
-  },
-  "devDependencies": {
-    "turbo": "^2.5.5",
-    "typescript": "^5.9.2",
-    "@types/node": "^24.3.0"
+    "dev": "pnpm --filter @mini-cursor/web-ui dev",
+    "build": "pnpm --filter @mini-cursor/web-ui build",
+    "check": "pnpm --filter @mini-cursor/web-ui check"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]
