@@ -1,11 +1,11 @@
 {
-  "name": "mini-cursor",
+  "name": "myagent",
   "private": true,
   "packageManager": "pnpm@10.16.1",
   "scripts": {
-    "dev": "pnpm --filter @mini-cursor/web-ui dev",
-    "build": "pnpm --filter @mini-cursor/web-ui build",
-    "check": "pnpm --filter @mini-cursor/web-ui check"
+    "dev": "pnpm --filter @myagent/web-ui dev",
+    "build": "pnpm --filter @myagent/web-ui build",
+    "check": "pnpm --filter @myagent/web-ui check"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]

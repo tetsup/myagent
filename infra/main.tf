@@ -32,7 +32,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Resource name prefix"
   type        = string
-  default     = "mini-cursor"
+  default     = "myagent"
 }
 
 variable "bedrock_model_id" {
@@ -91,7 +91,7 @@ resource "aws_s3_bucket_public_access_block" "workspace" {
 # ---------------------------------------------------------------------------
 # 2. SSM Parameter Store — GitHub token (SecureString)
 #    After first apply, update the value in AWS Console or CLI:
-#    aws ssm put-parameter --name /mini-cursor/github-token \
+#    aws ssm put-parameter --name /myagent/github-token \
 #      --value "ghp_xxxx" --type SecureString --overwrite
 # ---------------------------------------------------------------------------
 resource "aws_ssm_parameter" "github_token" {
@@ -160,7 +160,7 @@ resource "aws_cognito_user_pool_client" "app" {
 # 4. DynamoDB — task log cache (polled by mobile clients)
 # ---------------------------------------------------------------------------
 resource "aws_dynamodb_table" "logs" {
-  name         = "mini-cursor-logs"
+  name         = "myagent-logs"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "task_id"
 

@@ -1,5 +1,5 @@
 """
-mini-cursor-agent — AWS Lambda handler
+myagent — AWS Lambda handler
 
 Flow:
   POST /agent (API Gateway):
@@ -46,7 +46,7 @@ s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 lambda_client = boto3.client("lambda")
 
-LOGS_TABLE = os.environ.get("LOGS_TABLE", "mini-cursor-logs")
+LOGS_TABLE = os.environ.get("LOGS_TABLE", "myagent-logs")
 
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
@@ -264,7 +264,7 @@ def github_request(
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        "User-Agent": "mini-cursor-agent/1.0",
+        "User-Agent": "myagent/1.0",
     }
 
     body_bytes = None
@@ -468,7 +468,7 @@ def create_pull_request(
 def generate_branch_name() -> str:
     timestamp = int(time.time())
     short_id = uuid.uuid4().hex[:8]
-    return f"mini-cursor-patch-{timestamp}-{short_id}"
+    return f"myagent-patch-{timestamp}-{short_id}"
 
 
 def create_github_pr(
@@ -507,10 +507,10 @@ def create_github_pr(
 
     # --- Step 2: Commit file ---
     _, file_sha_on_branch = get_file_content_and_sha(token, owner, repo_name, file_path, branch_name)
-    commit_message = f"mini-cursor: {action} {file_path}"
+    commit_message = f"myagent: {action} {file_path}"
     if instruction:
         truncated = instruction[:72] + ("..." if len(instruction) > 72 else "")
-        commit_message = f"mini-cursor: {truncated}"
+        commit_message = f"myagent: {truncated}"
 
     if on_progress:
         on_progress(f"ファイルをコミット中: {file_path}")
@@ -528,10 +528,10 @@ def create_github_pr(
     commit_sha = commit_result.get("commit", {}).get("sha", "")
 
     # --- Step 3: Create Pull Request ---
-    pr_title = f"mini-cursor: {action} `{file_path}`"
+    pr_title = f"myagent: {action} `{file_path}`"
     pr_body = (
         f"## Summary\n\n"
-        f"Automated change by **mini-cursor** agent.\n\n"
+        f"Automated change by **myagent** agent.\n\n"
         f"**Instruction:** {instruction or '(no instruction provided)'}\n\n"
         f"**File:** `{file_path}`\n"
         f"**Branch:** `{branch_name}` → `{default_branch}`\n"

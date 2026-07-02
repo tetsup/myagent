@@ -1,4 +1,4 @@
-# mini-cursor
+# myagent
 
 > **日本語:** [README.ja.md](./README.ja.md)
 
@@ -24,8 +24,8 @@ and opens a pull request — all behind Cognito-authenticated API Gateway.
 
 | Package | Path | Stack | Role |
 |---|---|---|---|
-| `@mini-cursor/web-ui` | `packages/web-ui` | React 19 + Vite | Mobile console — Cognito login, send instructions, poll task logs |
-| `@mini-cursor/infra` | `infra/` | Terraform | AWS resources (API Gateway, Lambda, Cognito, DynamoDB, S3, SSM) |
+| `@myagent/web-ui` | `packages/web-ui` | React 19 + Vite | Mobile console — Cognito login, send instructions, poll task logs |
+| `@myagent/infra` | `infra/` | Terraform | AWS resources (API Gateway, Lambda, Cognito, DynamoDB, S3, SSM) |
 | agent Lambda | `packages/agent-lambda` | Python 3.11 | Bedrock code generation, GitHub branch/commit/PR automation |
 
 **Request flow**
@@ -72,7 +72,7 @@ export USER_POOL_ID=<value of cognito_user_pool_id>
 
 ```bash
 aws ssm put-parameter \
-  --name /mini-cursor/github-token \
+  --name /myagent/github-token \
   --value "ghp_xxxxxxxxxxxxxxxxxxxx" \
   --type SecureString \
   --overwrite \
@@ -109,7 +109,7 @@ From the repo root, start the mobile UI dev server (`host: true` allows access f
 
 ```bash
 pnpm install
-pnpm --filter @mini-cursor/web-ui dev
+pnpm --filter @myagent/web-ui dev
 ```
 
 Open the URL shown in the terminal (e.g. `http://192.168.x.x:5174`) on your phone and log in with the values from step 1:
@@ -130,7 +130,7 @@ Requires Node 22 + pnpm 10 (via corepack). Terraform >= 1.5 for infrastructure c
 
 ```bash
 pnpm install
-pnpm dev          # alias for @mini-cursor/web-ui dev (port 5174)
+pnpm dev          # alias for @myagent/web-ui dev (port 5174)
 pnpm check        # TypeScript check on web-ui
 ```
 
@@ -141,7 +141,7 @@ After editing `packages/agent-lambda/index.py`, redeploy with `terraform apply` 
 | Variable | Default | Description |
 |---|---|---|
 | `aws_region` | `us-east-1` | AWS region (Bedrock model availability varies) |
-| `project_name` | `mini-cursor` | Resource name prefix |
+| `project_name` | `myagent` | Resource name prefix |
 | `bedrock_model_id` | Claude 3.5 Sonnet v2 | Bedrock model for code generation |
 | `lambda_timeout` | `300` | Lambda timeout in seconds |
 

@@ -1,4 +1,4 @@
-# mini-cursor
+# myagent
 
 > **English:** [README.md](./README.md)
 
@@ -22,8 +22,8 @@
 
 | パッケージ | パス | スタック | 役割 |
 |---|---|---|---|
-| `@mini-cursor/web-ui` | `packages/web-ui` | React 19 + Vite | モバイルコンソール（Cognito ログイン・指示送信・タスクログのポーリング） |
-| `@mini-cursor/infra` | `infra/` | Terraform | AWS リソース（API Gateway、Lambda、Cognito、DynamoDB、S3、SSM） |
+| `@myagent/web-ui` | `packages/web-ui` | React 19 + Vite | モバイルコンソール（Cognito ログイン・指示送信・タスクログのポーリング） |
+| `@myagent/infra` | `infra/` | Terraform | AWS リソース（API Gateway、Lambda、Cognito、DynamoDB、S3、SSM） |
 | agent Lambda | `packages/agent-lambda` | Python 3.11 | Bedrock によるコード生成、GitHub ブランチ/コミット/PR 自動化 |
 
 **リクエストの流れ**
@@ -70,7 +70,7 @@ export USER_POOL_ID=<cognito_user_pool_id の値>
 
 ```bash
 aws ssm put-parameter \
-  --name /mini-cursor/github-token \
+  --name /myagent/github-token \
   --value "ghp_xxxxxxxxxxxxxxxxxxxx" \
   --type SecureString \
   --overwrite \
@@ -107,7 +107,7 @@ aws cognito-idp admin-set-user-password \
 
 ```bash
 pnpm install
-pnpm --filter @mini-cursor/web-ui dev
+pnpm --filter @myagent/web-ui dev
 ```
 
 ターミナルに表示される URL（例: `http://192.168.x.x:5174`）をスマホのブラウザで開き、ステップ 1 でメモした値を入力してログインします。
@@ -128,7 +128,7 @@ Node 22 + pnpm 10（corepack 経由）が必要です。インフラ変更には
 
 ```bash
 pnpm install
-pnpm dev          # @mini-cursor/web-ui dev のエイリアス（ポート 5174）
+pnpm dev          # @myagent/web-ui dev のエイリアス（ポート 5174）
 pnpm check        # web-ui の TypeScript チェック
 ```
 
@@ -139,7 +139,7 @@ pnpm check        # web-ui の TypeScript チェック
 | 変数 | デフォルト | 説明 |
 |---|---|---|
 | `aws_region` | `us-east-1` | AWS リージョン（Bedrock のモデル提供はリージョン依存） |
-| `project_name` | `mini-cursor` | リソース名のプレフィックス |
+| `project_name` | `myagent` | リソース名のプレフィックス |
 | `bedrock_model_id` | Claude 3.5 Sonnet v2 | コード生成用 Bedrock モデル |
 | `lambda_timeout` | `300` | Lambda タイムアウト（秒） |
 

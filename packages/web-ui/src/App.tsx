@@ -28,12 +28,12 @@ interface StatusResponse {
 const POLL_INTERVAL_MS = 4000;
 
 const STORAGE_KEYS = {
-  userPoolId: "mini-cursor:userPoolId",
-  clientId: "mini-cursor:clientId",
-  apiUrl: "mini-cursor:apiUrl",
-  username: "mini-cursor:username",
-  idToken: "mini-cursor:idToken",
-  taskId: "mini-cursor:taskId",
+  userPoolId: "myagent:userPoolId",
+  clientId: "myagent:clientId",
+  apiUrl: "myagent:apiUrl",
+  username: "myagent:username",
+  idToken: "myagent:idToken",
+  taskId: "myagent:taskId",
 } as const;
 
 const styles = {
@@ -434,7 +434,7 @@ export function App() {
       setIdToken(savedIdToken);
     }
 
-    appendLog("info", "system", "mini-cursor mobile UI initialized");
+    appendLog("info", "system", "myagent mobile UI initialized");
     if (savedIdToken) {
       appendLog("success", "cognito", `Restored session token: ${truncateToken(savedIdToken)}`);
     } else {
@@ -637,7 +637,7 @@ export function App() {
   return (
     <div style={styles.page}>
       <header style={styles.header}>
-        <h1 style={styles.title}>mini-cursor</h1>
+        <h1 style={styles.title}>myagent</h1>
         <p style={styles.subtitle}>Mobile agent console — Cognito + API Gateway</p>
       </header>
 
