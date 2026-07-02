@@ -2,70 +2,40 @@
 
 > **日本語:** [README.ja.md](./README.ja.md)
 
-A Cursor-like, GitHub-integrated development agent. A user submits a task
-("do X in repo Y"); the platform clones the repository, asks a language model
-for a structured plan, and surfaces the result in a web dashboard. The language
-model can run on-prem (Ollama / OpenAI-compatible servers such as vLLM in
-docker/k8s) or in the cloud.
+A mobile-first GitHub development agent on AWS. Send a natural-language instruction
+from your phone; the platform calls Amazon Bedrock (Claude), edits a target file,
+and opens a pull request — all behind Cognito-authenticated API Gateway.
 
 ## Architecture
 
 ```
-┌────────────┐    /api     ┌────────────┐   /run    ┌────────────────┐   LLM   ┌──────────────┐
-│  web        │ ─────────▶ │  api        │ ────────▶ │  agent (Go)     │ ──────▶ │  model server │
-│  React+Vite │            │  Hono/Node  │           │  clone + plan   │         │  ollama/cloud │
-└────────────┘            └────────────┘           └────────────────┘         └──────────────┘
+┌──────────────┐  Cognito JWT   ┌──────────────┐   invoke   ┌─────────────────┐
+│  web-ui       │ ─────────────▶ │  API Gateway  │ ─────────▶ │  agent (Lambda)  │
+│  React+Vite   │  POST /agent   │  HTTP API     │            │  Python 3.11     │
+│  (phone)      │  GET /status   │  + JWT auth   │            └────────┬────────┘
+└──────────────┘                └──────────────┘                     │
+       ▲                                                              │
+       │ poll logs                                                    ▼
+       │                                                         ┌─────────────┐
+       └──────────────── DynamoDB log cache ────────────────────│  Bedrock     │
+                                                                 │  GitHub API  │
+                                                                 └─────────────┘
 ```
 
 | Package | Path | Stack | Role |
 |---|---|---|---|
-| `@myagent/web` | `apps/web` | React 19 + Vite | Dashboard to submit tasks and view plans |
-| `@myagent/api` | `apps/api` | Hono on Node | Orchestrator: tasks, validation, agent dispatch |
-| agent worker | `services/agent` | Go | Clones repos, calls the LLM, returns a plan |
-| `@myagent/shared` | `packages/shared` | TypeScript | Shared contracts between web and api |
+| `@myagent/web-ui` | `packages/web-ui` | React 19 + Vite | Mobile console — Cognito login, send instructions, poll task logs |
+| agent Lambda | `packages/agent-lambda` | Python 3.11 | Bedrock code generation, GitHub branch/commit/PR automation |
+| Terraform | `infra/` | Terraform | AWS resources (API Gateway, Lambda, Cognito, DynamoDB, S3, SSM) |
 
-The agent is a compiled (Go) service so the heavy lifting (repo I/O, model
-calls) lives outside Node. Its LLM layer is provider-pluggable: `mock`
-(deterministic, offline — the default), `ollama` (on-prem), and `openai`
-(cloud / any OpenAI-compatible endpoint such as vLLM).
+**Request flow**
 
-## Development
+1. The mobile UI authenticates with Cognito and obtains an ID token.
+2. `POST /agent` returns `202 Accepted` with a `task_id` immediately; Lambda continues asynchronously.
+3. The UI polls `GET /status?task_id=…` for progress logs stored in DynamoDB.
+4. In the background, Lambda calls Bedrock, then uses the GitHub REST API to open a PR.
 
-Requires Node 22 + pnpm 10 (via corepack) and Go 1.22.
-
-```bash
-pnpm install            # install JS deps
-
-# Terminal 1 — Go agent worker (defaults to the offline mock provider)
-cd services/agent && go run .
-
-# Terminal 2 — Hono API
-pnpm --filter @myagent/api dev
-
-# Terminal 3 — React dashboard (proxies /api -> :3001)
-pnpm --filter @myagent/web dev   # http://localhost:5173
-```
-
-Repo-wide tasks (via turbo): `pnpm build`, `pnpm lint`, `pnpm test`,
-`pnpm check`. Go: `go test ./...` in `services/agent`.
-
-### LLM configuration (agent worker env)
-
-| Var | Values | Default |
-|---|---|---|
-| `LLM_PROVIDER` | `mock` \| `ollama` \| `openai` | `mock` |
-| `LLM_BASE_URL` | model server URL | provider-specific |
-| `LLM_MODEL` | model name | provider-specific |
-| `LLM_API_KEY` | bearer token (openai) | — |
-
-## Deployment
-
-`deploy/docker-compose.yml` runs the whole stack plus Ollama; `deploy/k8s/`
-contains Kubernetes manifests. See `deploy/.env.example` for model config.
-
-## mini-cursor (AWS) — Getting started
-
-Use this flow to operate the agent from a phone over Cognito-authenticated API Gateway.
+## Getting started
 
 ### 1. Deploy the infrastructure
 
@@ -102,7 +72,7 @@ export USER_POOL_ID=<value of cognito_user_pool_id>
 
 ```bash
 aws ssm put-parameter \
-  --name /mini-cursor/github-token \
+  --name /myagent/github-token \
   --value "ghp_xxxxxxxxxxxxxxxxxxxx" \
   --type SecureString \
   --overwrite \
@@ -139,7 +109,7 @@ From the repo root, start the mobile UI dev server (`host: true` allows access f
 
 ```bash
 pnpm install
-pnpm --filter @mini-cursor/web-ui dev
+pnpm --filter @myagent/web-ui dev
 ```
 
 Open the URL shown in the terminal (e.g. `http://192.168.x.x:5174`) on your phone and log in with the values from step 1:
@@ -151,5 +121,40 @@ Open the URL shown in the terminal (e.g. `http://192.168.x.x:5174`) on your phon
 | Username | `tetsup-phone` |
 | Password | Password set in step 2 |
 | API Gateway URL | `api_endpoint` |
+| Repository | `owner/repo` (e.g. `octocat/Hello-World`) |
+| File path | Target file in the repo (e.g. `src/main.py`) |
 
 After login, send a natural-language instruction and the Lambda agent runs via API Gateway.
+
+## Development
+
+Requires Node 22 + pnpm 10 (via corepack). Terraform >= 1.5 for infrastructure changes.
+
+```bash
+pnpm install
+pnpm dev          # alias for @myagent/web-ui dev (port 5174)
+pnpm check        # TypeScript check on web-ui
+```
+
+After editing `packages/agent-lambda/index.py`, redeploy with `terraform apply` in `infra/` so the Lambda zip is rebuilt.
+
+### Infrastructure variables (`infra/`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `aws_region` | `us-east-1` | AWS region (Bedrock model availability varies) |
+| `project_name` | `myagent` | Resource name prefix |
+| `bedrock_model_id` | Claude 3.5 Sonnet v2 | Bedrock model for code generation |
+| `lambda_timeout` | `300` | Lambda timeout in seconds |
+| `default_repo` | `""` | Optional fallback `owner/repo` (see `terraform.tfvars.example`) |
+| `default_file_path` | `src/main.py` | Optional fallback file path |
+
+### Lambda environment (set by Terraform)
+
+| Variable | Description |
+|---|---|
+| `GITHUB_TOKEN_SSM` | SSM parameter name for the GitHub PAT |
+| `BEDROCK_MODEL_ID` | Bedrock model ID |
+| `LOGS_TABLE` | DynamoDB table for task log cache |
+| `DEFAULT_REPO` | Fallback `owner/repo` when the request omits `repo` |
+| `DEFAULT_FILE_PATH` | Fallback file path when the request omits `file_path` |

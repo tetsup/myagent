@@ -32,7 +32,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Resource name prefix"
   type        = string
-  default     = "mini-cursor"
+  default     = "myagent"
 }
 
 variable "bedrock_model_id" {
@@ -45,6 +45,18 @@ variable "lambda_timeout" {
   description = "Lambda timeout in seconds"
   type        = number
   default     = 300
+}
+
+variable "default_repo" {
+  description = "Fallback owner/repo when the client omits repo (e.g. octocat/Hello-World)"
+  type        = string
+  default     = ""
+}
+
+variable "default_file_path" {
+  description = "Fallback file path when the client omits file_path"
+  type        = string
+  default     = "src/main.py"
 }
 
 # ---------------------------------------------------------------------------
@@ -91,7 +103,7 @@ resource "aws_s3_bucket_public_access_block" "workspace" {
 # ---------------------------------------------------------------------------
 # 2. SSM Parameter Store — GitHub token (SecureString)
 #    After first apply, update the value in AWS Console or CLI:
-#    aws ssm put-parameter --name /mini-cursor/github-token \
+#    aws ssm put-parameter --name /myagent/github-token \
 #      --value "ghp_xxxx" --type SecureString --overwrite
 # ---------------------------------------------------------------------------
 resource "aws_ssm_parameter" "github_token" {
@@ -160,7 +172,7 @@ resource "aws_cognito_user_pool_client" "app" {
 # 4. DynamoDB — task log cache (polled by mobile clients)
 # ---------------------------------------------------------------------------
 resource "aws_dynamodb_table" "logs" {
-  name         = "mini-cursor-logs"
+  name         = "${var.project_name}-logs"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "task_id"
 
@@ -358,8 +370,8 @@ resource "aws_lambda_function" "agent" {
       GITHUB_TOKEN_SSM  = aws_ssm_parameter.github_token.name
       BEDROCK_MODEL_ID  = var.bedrock_model_id
       BEDROCK_REGION    = var.aws_region
-      DEFAULT_REPO      = "your-user/your-repo"
-      DEFAULT_FILE_PATH = "src/main.py"
+      DEFAULT_REPO      = var.default_repo
+      DEFAULT_FILE_PATH = var.default_file_path
       LOGS_TABLE        = aws_dynamodb_table.logs.name
     }
   }

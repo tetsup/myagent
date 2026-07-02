@@ -1,41 +1,40 @@
 # myagent
 
-A Cursor-like GitHub development agent. See `README.md` for the architecture
-overview, package table, dev workflow, and LLM configuration.
+A mobile GitHub development agent on AWS. See `README.md` for architecture,
+getting started, and development workflow.
 
 ## Cursor Cloud specific instructions
 
-### Services & how to run them
+### What runs where
 
-Three long-running services. Standard commands live in `README.md` and each
-`package.json`; the non-obvious bits:
+| Component | Where | Notes |
+|---|---|---|
+| AWS stack | `infra/` (Terraform) | API Gateway, Lambda, Cognito, DynamoDB, S3, SSM — copy `terraform.tfvars.example` → `terraform.tfvars`, then `terraform apply` |
+| agent Lambda | `packages/agent-lambda` | Python; redeploy via `terraform apply` after edits |
+| mobile UI | `packages/web-ui` | Local Vite dev server; talks to deployed API Gateway |
 
-| Service | Port | Start command | Notes |
-|---|---|---|---|
-| agent (Go) | 8081 | `cd services/agent && go run .` | Start this FIRST |
-| api (Hono) | 3001 | `pnpm --filter @myagent/api dev` | needs `AGENT_URL` (default `http://localhost:8081`) |
-| web (React) | 5173 | `pnpm --filter @myagent/web dev` | dev server proxies `/api` → `:3001` |
+There is no local backend. The mobile UI connects to the Cognito + API Gateway
+endpoints produced by Terraform.
 
-- **Start order matters:** the API dispatches each task to the agent worker
-  synchronously, so if the agent is not running, `POST /api/tasks` marks the
-  task `failed`. Start agent → api → web.
-- **LLM defaults to `mock`** (deterministic, offline) so the full flow runs
-  with no secrets/network. For real models set the agent's env:
-  `LLM_PROVIDER=ollama|openai`, `LLM_BASE_URL`, `LLM_MODEL`, and
-  `LLM_API_KEY` (openai/cloud only).
-- The agent shallow-clones the target repo with `git`, so outbound network to
-  the repo host is required for non-mock, real-repo runs.
+### Local dev (mobile UI only)
+
+```bash
+pnpm install
+pnpm --filter @myagent/web-ui dev   # http://0.0.0.0:5174
+```
+
+`vite.config.ts` sets `host: true` so phones on the same LAN can reach the dev
+server. Cognito login and API calls still hit the real AWS endpoints configured
+in the UI.
 
 ### Gotchas
 
-- **Build `@myagent/shared` before running an app's dev/check directly.**
-  `apps/api` (tsx) and `apps/web`/`apps/api` typechecks resolve `@myagent/shared`
-  from its built `dist/`. The root turbo tasks handle this via
-  `dependsOn: ["^build"]`, but invoking a single package's `dev`/`check` with
-  `pnpm --filter ...` does not — run `pnpm build` (or
-  `pnpm --filter @myagent/shared build`) once first.
+- **Terraform must be applied before the UI is useful.** Without `api_endpoint`
+  and Cognito IDs from `terraform apply`, login and task submission will fail.
+- **GitHub PAT lives in SSM**, not in env files. Overwrite
+  `/myagent/github-token` via the AWS CLI after the first apply.
+- **Lambda code changes need redeploy.** Edit `packages/agent-lambda/index.py`,
+  then `cd infra && terraform apply` to rebuild the zip.
 - **esbuild build script** is enabled via `pnpm.onlyBuiltDependencies` in the
-  root `package.json`. If Vite/Vitest ever fail with an esbuild binary error,
-  run `pnpm rebuild esbuild`.
-- The `deploy/` docker-compose and k8s manifests describe the intended on-prem
-  deployment but are not exercised in this VM (Docker is not installed here).
+  root `package.json`. If Vite fails with an esbuild binary error, run
+  `pnpm rebuild esbuild`.

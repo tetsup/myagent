@@ -1,5 +1,5 @@
 """
-mini-cursor-agent — AWS Lambda handler
+myagent — AWS Lambda handler
 
 Flow:
   POST /agent (API Gateway):
@@ -46,7 +46,7 @@ s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 lambda_client = boto3.client("lambda")
 
-LOGS_TABLE = os.environ.get("LOGS_TABLE", "mini-cursor-logs")
+LOGS_TABLE = os.environ.get("LOGS_TABLE", "myagent-logs")
 
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
@@ -54,6 +54,22 @@ GITHUB_API_VERSION = "2022-11-28"
 TASK_STATUS_PROCESSING = "processing"
 TASK_STATUS_SUCCESS = "success"
 TASK_STATUS_FAILED = "failed"
+
+
+def _resolve_repo_file_path(body_or_event: dict) -> tuple[str, str, str | None]:
+    repo = (body_or_event.get("repo") or os.environ.get("DEFAULT_REPO") or "").strip()
+    file_path = (
+        body_or_event.get("file_path") or os.environ.get("DEFAULT_FILE_PATH") or "src/main.py"
+    ).strip()
+    if not repo or "/" not in repo:
+        return (
+            "",
+            file_path,
+            "Set 'repo' to a valid 'owner/repo' in the request body or DEFAULT_REPO env var",
+        )
+    if not file_path:
+        return repo, "", "Set 'file_path' in the request body or DEFAULT_FILE_PATH env var"
+    return repo, file_path, None
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +280,7 @@ def github_request(
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        "User-Agent": "mini-cursor-agent/1.0",
+        "User-Agent": "myagent/1.0",
     }
 
     body_bytes = None
@@ -468,7 +484,7 @@ def create_pull_request(
 def generate_branch_name() -> str:
     timestamp = int(time.time())
     short_id = uuid.uuid4().hex[:8]
-    return f"mini-cursor-patch-{timestamp}-{short_id}"
+    return f"myagent-patch-{timestamp}-{short_id}"
 
 
 def create_github_pr(
@@ -507,10 +523,10 @@ def create_github_pr(
 
     # --- Step 2: Commit file ---
     _, file_sha_on_branch = get_file_content_and_sha(token, owner, repo_name, file_path, branch_name)
-    commit_message = f"mini-cursor: {action} {file_path}"
+    commit_message = f"myagent: {action} {file_path}"
     if instruction:
         truncated = instruction[:72] + ("..." if len(instruction) > 72 else "")
-        commit_message = f"mini-cursor: {truncated}"
+        commit_message = f"myagent: {truncated}"
 
     if on_progress:
         on_progress(f"ファイルをコミット中: {file_path}")
@@ -528,10 +544,10 @@ def create_github_pr(
     commit_sha = commit_result.get("commit", {}).get("sha", "")
 
     # --- Step 3: Create Pull Request ---
-    pr_title = f"mini-cursor: {action} `{file_path}`"
+    pr_title = f"myagent: {action} `{file_path}`"
     pr_body = (
         f"## Summary\n\n"
-        f"Automated change by **mini-cursor** agent.\n\n"
+        f"Automated change by **myagent** agent.\n\n"
         f"**Instruction:** {instruction or '(no instruction provided)'}\n\n"
         f"**File:** `{file_path}`\n"
         f"**Branch:** `{branch_name}` → `{default_branch}`\n"
@@ -601,14 +617,9 @@ def handle_post_agent(event: dict, context) -> dict:
         if not user_instruction:
             return _response(400, {"error": "Missing required field: instruction"})
 
-        repo_name = body.get("repo") or os.environ.get("DEFAULT_REPO", "your-user/your-repo")
-        file_path = body.get("file_path") or os.environ.get("DEFAULT_FILE_PATH", "src/main.py")
-
-        if repo_name == "your-user/your-repo":
-            return _response(
-                400,
-                {"error": "Set 'repo' to a valid 'owner/repo' in the request body or DEFAULT_REPO env var"},
-            )
+        repo_name, file_path, repo_error = _resolve_repo_file_path(body)
+        if repo_error:
+            return _response(400, {"error": repo_error})
 
         task_id = str(uuid.uuid4())
         init_task_record(task_id, cognito_sub, user_instruction, repo_name, file_path)
@@ -678,8 +689,11 @@ def process_background_task(event: dict, context) -> dict:
     """Run the full agent workflow and stream progress into DynamoDB."""
     task_id = event.get("task_id", "")
     user_instruction = event.get("instruction", "").strip()
-    repo_name = event.get("repo") or os.environ.get("DEFAULT_REPO", "your-user/your-repo")
-    file_path = event.get("file_path") or os.environ.get("DEFAULT_FILE_PATH", "src/main.py")
+    repo_name, file_path, repo_error = _resolve_repo_file_path(event)
+    if repo_error:
+        logger.error("Background invocation invalid repo/file_path: %s", repo_error)
+        return {"statusCode": 400, "body": repo_error}
+
     cognito_sub = event.get("cognito_sub")
 
     if not task_id:

@@ -2,61 +2,38 @@
 
 > **English:** [README.md](./README.md)
 
-Cursor ライクな GitHub 連携開発エージェントです。ユーザーがタスク（「リポジトリ Y で X をやって」）を送信すると、プラットフォームがリポジトリをクローンし、言語モデルに構造化プランを依頼して、結果を Web ダッシュボードに表示します。言語モデルはオンプレ（Ollama / docker・k8s 上の vLLM など OpenAI 互換サーバー）でもクラウドでも動かせます。
+スマホ向けの GitHub 開発エージェント（AWS 上で動作）です。スマホから自然言語の指示を送ると、Amazon Bedrock（Claude）でコードを生成し、対象ファイルを編集してプルリクエストを開きます。API Gateway の背後で Cognito 認証がかかっています。
 
 ## アーキテクチャ
 
 ```
-┌────────────┐    /api     ┌────────────┐   /run    ┌────────────────┐   LLM   ┌──────────────┐
-│  web        │ ─────────▶ │  api        │ ────────▶ │  agent (Go)     │ ──────▶ │  model server │
-│  React+Vite │            │  Hono/Node  │           │  clone + plan   │         │  ollama/cloud │
-└────────────┘            └────────────┘           └────────────────┘         └──────────────┘
+┌──────────────┐  Cognito JWT   ┌──────────────┐   invoke   ┌─────────────────┐
+│  web-ui       │ ─────────────▶ │  API Gateway  │ ─────────▶ │  agent (Lambda)  │
+│  React+Vite   │  POST /agent   │  HTTP API     │            │  Python 3.11     │
+│  (スマホ)      │  GET /status   │  + JWT 認証   │            └────────┬────────┘
+└──────────────┘                └──────────────┘                     │
+       ▲                                                              │
+       │ ログをポーリング                                               ▼
+       │                                                         ┌─────────────┐
+       └──────────────── DynamoDB ログキャッシュ ────────────────│  Bedrock     │
+                                                                 │  GitHub API  │
+                                                                 └─────────────┘
 ```
 
 | パッケージ | パス | スタック | 役割 |
 |---|---|---|---|
-| `@myagent/web` | `apps/web` | React 19 + Vite | タスク送信・プラン閲覧用ダッシュボード |
-| `@myagent/api` | `apps/api` | Hono on Node | オーケストレーター（タスク管理・検証・エージェント起動） |
-| agent worker | `services/agent` | Go | リポジトリのクローン、LLM 呼び出し、プラン返却 |
-| `@myagent/shared` | `packages/shared` | TypeScript | web と api 間の共有コントラクト |
+| `@myagent/web-ui` | `packages/web-ui` | React 19 + Vite | モバイルコンソール（Cognito ログイン・指示送信・タスクログのポーリング） |
+| agent Lambda | `packages/agent-lambda` | Python 3.11 | Bedrock によるコード生成、GitHub ブランチ/コミット/PR 自動化 |
+| Terraform | `infra/` | Terraform | AWS リソース（API Gateway、Lambda、Cognito、DynamoDB、S3、SSM） |
 
-エージェントは Go でコンパイルされたサービスなので、リポジトリ I/O やモデル呼び出しなどの重い処理は Node の外で実行されます。LLM レイヤーはプロバイダー差し替え可能で、`mock`（決定的・オフライン — デフォルト）、`ollama`（オンプレ）、`openai`（クラウド / vLLM など OpenAI 互換エンドポイント）に対応しています。
+**リクエストの流れ**
 
-## 開発
+1. モバイル UI が Cognito で認証し、ID トークンを取得する。
+2. `POST /agent` は即座に `202 Accepted` と `task_id` を返し、Lambda は非同期で処理を続ける。
+3. UI は `GET /status?task_id=…` をポーリングし、DynamoDB に蓄積された進捗ログを表示する。
+4. バックグラウンドで Lambda が Bedrock を呼び出し、GitHub REST API で PR を開く。
 
-Node 22 + pnpm 10（corepack 経由）と Go 1.22 が必要です。
-
-```bash
-pnpm install            # JS 依存関係のインストール
-
-# ターミナル 1 — Go エージェントワーカー（デフォルトはオフラインモック）
-cd services/agent && go run .
-
-# ターミナル 2 — Hono API
-pnpm --filter @myagent/api dev
-
-# ターミナル 3 — React ダッシュボード（/api を :3001 にプロキシ）
-pnpm --filter @myagent/web dev   # http://localhost:5173
-```
-
-リポジトリ全体のタスク（turbo 経由）: `pnpm build`、`pnpm lint`、`pnpm test`、`pnpm check`。Go: `services/agent` で `go test ./...`。
-
-### LLM 設定（エージェントワーカーの環境変数）
-
-| 変数 | 値 | デフォルト |
-|---|---|---|
-| `LLM_PROVIDER` | `mock` \| `ollama` \| `openai` | `mock` |
-| `LLM_BASE_URL` | モデルサーバー URL | プロバイダー依存 |
-| `LLM_MODEL` | モデル名 | プロバイダー依存 |
-| `LLM_API_KEY` | ベアラートークン（openai） | — |
-
-## デプロイ
-
-`deploy/docker-compose.yml` でスタック全体と Ollama を起動できます。`deploy/k8s/` に Kubernetes マニフェストがあります。モデル設定は `deploy/.env.example` を参照してください。
-
-## mini-cursor（AWS）使い方
-
-スマホから Cognito 認証付き API Gateway 経由でエージェントを操作するための手順です。
+## 使い方
 
 ### 1. インフラをデプロイする
 
@@ -93,7 +70,7 @@ export USER_POOL_ID=<cognito_user_pool_id の値>
 
 ```bash
 aws ssm put-parameter \
-  --name /mini-cursor/github-token \
+  --name /myagent/github-token \
   --value "ghp_xxxxxxxxxxxxxxxxxxxx" \
   --type SecureString \
   --overwrite \
@@ -130,7 +107,7 @@ aws cognito-idp admin-set-user-password \
 
 ```bash
 pnpm install
-pnpm --filter @mini-cursor/web-ui dev
+pnpm --filter @myagent/web-ui dev
 ```
 
 ターミナルに表示される URL（例: `http://192.168.x.x:5174`）をスマホのブラウザで開き、ステップ 1 でメモした値を入力してログインします。
@@ -142,5 +119,40 @@ pnpm --filter @mini-cursor/web-ui dev
 | Username | `tetsup-phone` |
 | Password | ステップ 2 で設定したパスワード |
 | API Gateway URL | `api_endpoint` |
+| リポジトリ | `owner/repo`（例: `octocat/Hello-World`） |
+| ファイルパス | 編集対象ファイル（例: `src/main.py`） |
 
 ログイン後、自然言語の指示を送信すると API Gateway 経由で Lambda エージェントが実行されます。
+
+## 開発
+
+Node 22 + pnpm 10（corepack 経由）が必要です。インフラ変更には Terraform >= 1.5 を使います。
+
+```bash
+pnpm install
+pnpm dev          # @myagent/web-ui dev のエイリアス（ポート 5174）
+pnpm check        # web-ui の TypeScript チェック
+```
+
+`packages/agent-lambda/index.py` を編集したら、`infra/` で `terraform apply` を再実行して Lambda の zip を更新してください。
+
+### インフラ変数（`infra/`）
+
+| 変数 | デフォルト | 説明 |
+|---|---|---|
+| `aws_region` | `us-east-1` | AWS リージョン（Bedrock のモデル提供はリージョン依存） |
+| `project_name` | `myagent` | リソース名のプレフィックス |
+| `bedrock_model_id` | Claude 3.5 Sonnet v2 | コード生成用 Bedrock モデル |
+| `lambda_timeout` | `300` | Lambda タイムアウト（秒） |
+| `default_repo` | `""` | 任意のフォールバック `owner/repo`（`terraform.tfvars.example` 参照） |
+| `default_file_path` | `src/main.py` | 任意のフォールバックファイルパス |
+
+### Lambda 環境変数（Terraform が設定）
+
+| 変数 | 説明 |
+|---|---|
+| `GITHUB_TOKEN_SSM` | GitHub PAT の SSM パラメータ名 |
+| `BEDROCK_MODEL_ID` | Bedrock モデル ID |
+| `LOGS_TABLE` | タスクログキャッシュ用 DynamoDB テーブル |
+| `DEFAULT_REPO` | リクエストに `repo` がない場合の `owner/repo` |
+| `DEFAULT_FILE_PATH` | リクエストに `file_path` がない場合のファイルパス |
