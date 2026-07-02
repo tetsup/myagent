@@ -8,7 +8,7 @@
 
 ```
 ┌──────────────┐  Cognito JWT   ┌──────────────┐   invoke   ┌─────────────────┐
-│  web-ui       │ ─────────────▶ │  API Gateway  │ ─────────▶ │  agent (Lambda)  │
+│  web          │ ─────────────▶ │  API Gateway  │ ─────────▶ │  agent (Lambda)  │
 │  React+Vite   │  POST /agent   │  HTTP API     │            │  Python 3.11     │
 │  (スマホ)      │  GET /status   │  + JWT 認証   │            └────────┬────────┘
 └──────────────┘                └──────────────┘                     │
@@ -22,9 +22,9 @@
 
 | パッケージ | パス | スタック | 役割 |
 |---|---|---|---|
-| `@myagent/web-ui` | `packages/web-ui` | React 19 + Vite | モバイルコンソール（Cognito ログイン・指示送信・タスクログのポーリング） |
-| agent Lambda | `packages/agent-lambda` | Python 3.11 | Bedrock によるコード生成、GitHub ブランチ/コミット/PR 自動化 |
-| Terraform | `infra/` | Terraform | AWS リソース（API Gateway、Lambda、Cognito、DynamoDB、S3、SSM） |
+| `@myagent/web` | `apps/web` | React 19 + Vite | モバイルコンソール（Cognito ログイン・指示送信・タスクログのポーリング） |
+| agent Lambda | `apps/agent` | Python 3.11 | Bedrock によるコード生成、GitHub ブランチ/コミット/PR 自動化 |
+| Terraform | `infra/terraform` | Terraform | AWS リソース（API Gateway、Lambda、Cognito、DynamoDB、S3、SSM） |
 
 **リクエストの流れ**
 
@@ -37,10 +37,10 @@
 
 ### 1. インフラをデプロイする
 
-`infra/` で Terraform を実行し、出力される値をメモします。
+`infra/terraform/` で Terraform を実行し、出力される値をメモします。
 
 ```bash
-cd infra
+cd infra/terraform
 terraform init
 terraform apply
 ```
@@ -107,7 +107,7 @@ aws cognito-idp admin-set-user-password \
 
 ```bash
 pnpm install
-pnpm --filter @myagent/web-ui dev
+pnpm --filter @myagent/web dev
 ```
 
 ターミナルに表示される URL（例: `http://192.168.x.x:5174`）をスマホのブラウザで開き、ステップ 1 でメモした値を入力してログインします。
@@ -130,13 +130,13 @@ Node 22 + pnpm 10（corepack 経由）が必要です。インフラ変更には
 
 ```bash
 pnpm install
-pnpm dev          # @myagent/web-ui dev のエイリアス（ポート 5174）
-pnpm check        # web-ui の TypeScript チェック
+pnpm dev          # @myagent/web dev のエイリアス（ポート 5174）
+pnpm check        # apps/web の TypeScript チェック
 ```
 
-`packages/agent-lambda/index.py` を編集したら、`infra/` で `terraform apply` を再実行して Lambda の zip を更新してください。
+`apps/agent/index.py` を編集したら、`infra/terraform/` で `terraform apply` を再実行して Lambda の zip を更新してください。
 
-### インフラ変数（`infra/`）
+### インフラ変数（`infra/terraform/`）
 
 | 変数 | デフォルト | 説明 |
 |---|---|---|

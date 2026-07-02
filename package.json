@@ -3,9 +3,9 @@
   "private": true,
   "packageManager": "pnpm@10.16.1",
   "scripts": {
-    "dev": "pnpm --filter @myagent/web-ui dev",
-    "build": "pnpm --filter @myagent/web-ui build",
-    "check": "pnpm --filter @myagent/web-ui check"
+    "dev": "pnpm --filter @myagent/web dev",
+    "build": "pnpm --filter @myagent/web build",
+    "check": "pnpm --filter @myagent/web check"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]
