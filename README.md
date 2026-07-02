@@ -25,8 +25,8 @@ and opens a pull request — all behind Cognito-authenticated API Gateway.
 | Package | Path | Stack | Role |
 |---|---|---|---|
 | `@myagent/web-ui` | `packages/web-ui` | React 19 + Vite | Mobile console — Cognito login, send instructions, poll task logs |
-| `@myagent/infra` | `infra/` | Terraform | AWS resources (API Gateway, Lambda, Cognito, DynamoDB, S3, SSM) |
 | agent Lambda | `packages/agent-lambda` | Python 3.11 | Bedrock code generation, GitHub branch/commit/PR automation |
+| Terraform | `infra/` | Terraform | AWS resources (API Gateway, Lambda, Cognito, DynamoDB, S3, SSM) |
 
 **Request flow**
 
@@ -121,6 +121,8 @@ Open the URL shown in the terminal (e.g. `http://192.168.x.x:5174`) on your phon
 | Username | `tetsup-phone` |
 | Password | Password set in step 2 |
 | API Gateway URL | `api_endpoint` |
+| Repository | `owner/repo` (e.g. `octocat/Hello-World`) |
+| File path | Target file in the repo (e.g. `src/main.py`) |
 
 After login, send a natural-language instruction and the Lambda agent runs via API Gateway.
 
@@ -144,6 +146,8 @@ After editing `packages/agent-lambda/index.py`, redeploy with `terraform apply` 
 | `project_name` | `myagent` | Resource name prefix |
 | `bedrock_model_id` | Claude 3.5 Sonnet v2 | Bedrock model for code generation |
 | `lambda_timeout` | `300` | Lambda timeout in seconds |
+| `default_repo` | `""` | Optional fallback `owner/repo` (see `terraform.tfvars.example`) |
+| `default_file_path` | `src/main.py` | Optional fallback file path |
 
 ### Lambda environment (set by Terraform)
 

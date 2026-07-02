@@ -8,8 +8,6 @@ importers:
 
   .: {}
 
-  infra: {}
-
   packages/web-ui:
     dependencies:
       amazon-cognito-identity-js:

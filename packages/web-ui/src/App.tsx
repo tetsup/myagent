@@ -31,6 +31,8 @@ const STORAGE_KEYS = {
   userPoolId: "myagent:userPoolId",
   clientId: "myagent:clientId",
   apiUrl: "myagent:apiUrl",
+  repo: "myagent:repo",
+  filePath: "myagent:filePath",
   username: "myagent:username",
   idToken: "myagent:idToken",
   taskId: "myagent:taskId",
@@ -288,6 +290,8 @@ export function App() {
   const [username, setUsername] = usePersistedState(STORAGE_KEYS.username);
   const [password, setPassword] = useState("");
   const [apiUrl, setApiUrl] = usePersistedState(STORAGE_KEYS.apiUrl);
+  const [repo, setRepo] = usePersistedState(STORAGE_KEYS.repo);
+  const [filePath, setFilePath] = usePersistedState(STORAGE_KEYS.filePath);
   const [instruction, setInstruction] = useState("");
   const [idToken, setIdToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -434,11 +438,11 @@ export function App() {
       setIdToken(savedIdToken);
     }
 
-    appendLog("info", "system", "myagent mobile UI initialized");
+    appendLog("info", "system", "myagent モバイル UI を初期化しました");
     if (savedIdToken) {
-      appendLog("success", "cognito", `Restored session token: ${truncateToken(savedIdToken)}`);
+      appendLog("success", "cognito", `保存済みセッションを復元: ${truncateToken(savedIdToken)}`);
     } else {
-      appendLog("warn", "cognito", "Not authenticated — enter Cognito credentials to log in");
+      appendLog("warn", "cognito", "未認証 — Cognito の認証情報を入力してログインしてください");
     }
   }, [appendLog]);
 
@@ -474,12 +478,12 @@ export function App() {
     const trimmedPassword = password;
 
     if (!trimmedPoolId || !trimmedClientId || !trimmedUsername || !trimmedPassword) {
-      appendLog("error", "cognito", "UserPoolId, ClientId, username, and password are required");
+      appendLog("error", "cognito", "User Pool ID、Client ID、ユーザー名、パスワードは必須です");
       return;
     }
 
     setIsLoggingIn(true);
-    appendLog("info", "cognito", `Authenticating user: ${trimmedUsername}`);
+    appendLog("info", "cognito", `認証中: ${trimmedUsername}`);
 
     const userPool = new CognitoUserPool({
       UserPoolId: trimmedPoolId,
@@ -502,21 +506,21 @@ export function App() {
         setIdToken(token);
         setPassword("");
         writeStoredValue(STORAGE_KEYS.idToken, token);
-        appendLog("success", "cognito", `Login successful — ID token acquired (${truncateToken(token)})`);
-        appendLog("info", "cloudwatch", `[${formatTimestamp(new Date())}] cognito-idp: InitiateAuth succeeded for ${trimmedUsername}`);
+        appendLog("success", "cognito", `ログイン成功 — ID トークンを取得 (${truncateToken(token)})`);
+        appendLog("info", "cloudwatch", `[${formatTimestamp(new Date())}] cognito-idp: InitiateAuth 成功 (${trimmedUsername})`);
         setIsLoggingIn(false);
       },
       onFailure: (err) => {
-        const message = err.message || "Authentication failed";
-        appendLog("error", "cognito", `Login failed: ${message}`);
-        appendLog("error", "cloudwatch", `[${formatTimestamp(new Date())}] cognito-idp: InitiateAuth failed — ${message}`);
+        const message = err.message || "認証に失敗しました";
+        appendLog("error", "cognito", `ログイン失敗: ${message}`);
+        appendLog("error", "cloudwatch", `[${formatTimestamp(new Date())}] cognito-idp: InitiateAuth 失敗 — ${message}`);
         setIsLoggingIn(false);
       },
       newPasswordRequired: () => {
         appendLog(
           "warn",
           "cognito",
-          "New password required — complete the password change flow in AWS Console first",
+          "初回ログインのパスワード変更が必要です — AWS コンソールで変更を完了してください",
         );
         setIsLoggingIn(false);
       },
@@ -535,25 +539,37 @@ export function App() {
     } catch {
       // Ignore privacy-mode errors.
     }
-    appendLog("info", "cognito", "Logged out — ID token cleared from local storage");
+    appendLog("info", "cognito", "ログアウト — ID トークンを削除しました");
   }, [appendLog, stopPolling]);
 
   const handleSubmitInstruction = useCallback(async () => {
     const trimmedInstruction = instruction.trim();
     const trimmedApiUrl = apiUrl.trim();
+    const trimmedRepo = repo.trim();
+    const trimmedFilePath = filePath.trim();
 
     if (!idToken) {
-      appendLog("error", "api", "Not authenticated — log in before sending instructions");
+      appendLog("error", "api", "未認証 — 指示を送る前にログインしてください");
       return;
     }
 
     if (!trimmedApiUrl) {
-      appendLog("error", "api", "API Gateway URL is required");
+      appendLog("error", "api", "API Gateway URL は必須です");
+      return;
+    }
+
+    if (!trimmedRepo || !trimmedRepo.includes("/")) {
+      appendLog("error", "api", "リポジトリは owner/repo 形式で入力してください");
+      return;
+    }
+
+    if (!trimmedFilePath) {
+      appendLog("error", "api", "ファイルパスは必須です");
       return;
     }
 
     if (!trimmedInstruction) {
-      appendLog("error", "api", "Instruction cannot be empty");
+      appendLog("error", "api", "指示は空にできません");
       return;
     }
 
@@ -569,6 +585,8 @@ export function App() {
 
     const payload = {
       instruction: trimmedInstruction,
+      repo: trimmedRepo,
+      file_path: trimmedFilePath,
     };
 
     try {
@@ -623,12 +641,12 @@ export function App() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [activeTaskId, apiUrl, appendLog, idToken, instruction, startPolling, taskStatus]);
+  }, [activeTaskId, apiUrl, appendLog, filePath, idToken, instruction, repo, startPolling, taskStatus]);
 
   const clearConsole = useCallback(() => {
     setConsoleEntries([]);
     renderedLogCountRef.current = 0;
-    appendLog("info", "system", "Console cleared");
+    appendLog("info", "system", "コンソールをクリアしました");
   }, [appendLog]);
 
   const isAuthenticated = Boolean(idToken);
@@ -638,19 +656,19 @@ export function App() {
     <div style={styles.page}>
       <header style={styles.header}>
         <h1 style={styles.title}>myagent</h1>
-        <p style={styles.subtitle}>Mobile agent console — Cognito + API Gateway</p>
+        <p style={styles.subtitle}>モバイルエージェントコンソール — Cognito + API Gateway</p>
       </header>
 
       <main style={styles.main}>
         <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Cognito Authentication</h2>
+          <h2 style={styles.sectionTitle}>Cognito 認証</h2>
           <span
             style={{
               ...styles.badge,
               ...(isAuthenticated ? {} : styles.badgeOffline),
             }}
           >
-            {isAuthenticated ? "● Authenticated" : "○ Not authenticated"}
+            {isAuthenticated ? "● 認証済み" : "○ 未認証"}
           </span>
 
           <label style={styles.label}>
@@ -680,20 +698,20 @@ export function App() {
           </label>
 
           <label style={styles.label}>
-            Username (email)
+            ユーザー名
             <input
               style={styles.input}
-              type="email"
+              type="text"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
-              placeholder="you@example.com"
+              placeholder="tetsup-phone"
               autoComplete="username"
               disabled={isLoggingIn}
             />
           </label>
 
           <label style={styles.label}>
-            Password
+            パスワード
             <input
               style={styles.input}
               type="password"
@@ -715,7 +733,7 @@ export function App() {
               onClick={handleLogin}
               disabled={isLoggingIn}
             >
-              {isLoggingIn ? "Logging in…" : "Log in with Cognito"}
+              {isLoggingIn ? "ログイン中…" : "Cognito でログイン"}
             </button>
 
             {isAuthenticated && (
@@ -724,20 +742,20 @@ export function App() {
                 style={{ ...styles.button, ...styles.buttonSecondary }}
                 onClick={handleLogout}
               >
-                Log out
+                ログアウト
               </button>
             )}
           </div>
 
           {isAuthenticated && idToken && (
             <p style={styles.hint}>
-              Active ID token: {truncateToken(idToken)}
+              有効な ID トークン: {truncateToken(idToken)}
             </p>
           )}
         </section>
 
         <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Agent Instruction</h2>
+          <h2 style={styles.sectionTitle}>エージェントへの指示</h2>
 
           {isBackgroundRunning && (
             <span style={{ ...styles.badge, ...styles.badgeRunning }}>
@@ -765,13 +783,39 @@ export function App() {
           </label>
 
           <label style={styles.label}>
-            Instruction
+            リポジトリ（owner/repo）
+            <input
+              style={styles.input}
+              type="text"
+              value={repo}
+              onChange={(event) => setRepo(event.target.value)}
+              placeholder="octocat/Hello-World"
+              autoComplete="off"
+              disabled={!isAuthenticated || isSubmitting || isBackgroundRunning}
+            />
+          </label>
+
+          <label style={styles.label}>
+            ファイルパス
+            <input
+              style={styles.input}
+              type="text"
+              value={filePath}
+              onChange={(event) => setFilePath(event.target.value)}
+              placeholder="src/main.py"
+              autoComplete="off"
+              disabled={!isAuthenticated || isSubmitting || isBackgroundRunning}
+            />
+          </label>
+
+          <label style={styles.label}>
+            指示内容
             <textarea
               style={styles.textarea}
               rows={5}
               value={instruction}
               onChange={(event) => setInstruction(event.target.value)}
-              placeholder="Describe the code change you want the agent to make…"
+              placeholder="エージェントに依頼したいコード変更を入力…"
               disabled={!isAuthenticated || isSubmitting || isBackgroundRunning}
             />
           </label>
@@ -789,14 +833,14 @@ export function App() {
             }}
             disabled={!isAuthenticated || isSubmitting || isBackgroundRunning}
           >
-            {isSubmitting ? "送信中…" : isBackgroundRunning ? "バックグラウンド実行中…" : "Send instruction to API"}
+            {isSubmitting ? "送信中…" : isBackgroundRunning ? "バックグラウンド実行中…" : "指示を API に送信"}
           </button>
         </section>
       </main>
 
       <footer style={styles.console}>
         <div style={styles.consoleHeader}>
-          <span>Status Console</span>
+          <span>ステータスコンソール</span>
           <button
             type="button"
             onClick={clearConsole}
@@ -810,12 +854,12 @@ export function App() {
               cursor: "pointer",
             }}
           >
-            Clear
+            クリア
           </button>
         </div>
         <div style={styles.consoleBody}>
           {consoleEntries.length === 0 ? (
-            <p style={{ ...styles.logLine, color: "#555" }}>Waiting for events…</p>
+            <p style={{ ...styles.logLine, color: "#555" }}>イベント待機中…</p>
           ) : (
             consoleEntries.map((entry) => (
               <p key={entry.id} style={styles.logLine}>

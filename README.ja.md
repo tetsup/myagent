@@ -23,8 +23,8 @@
 | パッケージ | パス | スタック | 役割 |
 |---|---|---|---|
 | `@myagent/web-ui` | `packages/web-ui` | React 19 + Vite | モバイルコンソール（Cognito ログイン・指示送信・タスクログのポーリング） |
-| `@myagent/infra` | `infra/` | Terraform | AWS リソース（API Gateway、Lambda、Cognito、DynamoDB、S3、SSM） |
 | agent Lambda | `packages/agent-lambda` | Python 3.11 | Bedrock によるコード生成、GitHub ブランチ/コミット/PR 自動化 |
+| Terraform | `infra/` | Terraform | AWS リソース（API Gateway、Lambda、Cognito、DynamoDB、S3、SSM） |
 
 **リクエストの流れ**
 
@@ -119,6 +119,8 @@ pnpm --filter @myagent/web-ui dev
 | Username | `tetsup-phone` |
 | Password | ステップ 2 で設定したパスワード |
 | API Gateway URL | `api_endpoint` |
+| リポジトリ | `owner/repo`（例: `octocat/Hello-World`） |
+| ファイルパス | 編集対象ファイル（例: `src/main.py`） |
 
 ログイン後、自然言語の指示を送信すると API Gateway 経由で Lambda エージェントが実行されます。
 
@@ -142,6 +144,8 @@ pnpm check        # web-ui の TypeScript チェック
 | `project_name` | `myagent` | リソース名のプレフィックス |
 | `bedrock_model_id` | Claude 3.5 Sonnet v2 | コード生成用 Bedrock モデル |
 | `lambda_timeout` | `300` | Lambda タイムアウト（秒） |
+| `default_repo` | `""` | 任意のフォールバック `owner/repo`（`terraform.tfvars.example` 参照） |
+| `default_file_path` | `src/main.py` | 任意のフォールバックファイルパス |
 
 ### Lambda 環境変数（Terraform が設定）
 

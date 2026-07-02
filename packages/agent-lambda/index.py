@@ -56,6 +56,22 @@ TASK_STATUS_SUCCESS = "success"
 TASK_STATUS_FAILED = "failed"
 
 
+def _resolve_repo_file_path(body_or_event: dict) -> tuple[str, str, str | None]:
+    repo = (body_or_event.get("repo") or os.environ.get("DEFAULT_REPO") or "").strip()
+    file_path = (
+        body_or_event.get("file_path") or os.environ.get("DEFAULT_FILE_PATH") or "src/main.py"
+    ).strip()
+    if not repo or "/" not in repo:
+        return (
+            "",
+            file_path,
+            "Set 'repo' to a valid 'owner/repo' in the request body or DEFAULT_REPO env var",
+        )
+    if not file_path:
+        return repo, "", "Set 'file_path' in the request body or DEFAULT_FILE_PATH env var"
+    return repo, file_path, None
+
+
 # ---------------------------------------------------------------------------
 # DynamoDB task log cache
 # ---------------------------------------------------------------------------
@@ -601,14 +617,9 @@ def handle_post_agent(event: dict, context) -> dict:
         if not user_instruction:
             return _response(400, {"error": "Missing required field: instruction"})
 
-        repo_name = body.get("repo") or os.environ.get("DEFAULT_REPO", "your-user/your-repo")
-        file_path = body.get("file_path") or os.environ.get("DEFAULT_FILE_PATH", "src/main.py")
-
-        if repo_name == "your-user/your-repo":
-            return _response(
-                400,
-                {"error": "Set 'repo' to a valid 'owner/repo' in the request body or DEFAULT_REPO env var"},
-            )
+        repo_name, file_path, repo_error = _resolve_repo_file_path(body)
+        if repo_error:
+            return _response(400, {"error": repo_error})
 
         task_id = str(uuid.uuid4())
         init_task_record(task_id, cognito_sub, user_instruction, repo_name, file_path)
@@ -678,8 +689,11 @@ def process_background_task(event: dict, context) -> dict:
     """Run the full agent workflow and stream progress into DynamoDB."""
     task_id = event.get("task_id", "")
     user_instruction = event.get("instruction", "").strip()
-    repo_name = event.get("repo") or os.environ.get("DEFAULT_REPO", "your-user/your-repo")
-    file_path = event.get("file_path") or os.environ.get("DEFAULT_FILE_PATH", "src/main.py")
+    repo_name, file_path, repo_error = _resolve_repo_file_path(event)
+    if repo_error:
+        logger.error("Background invocation invalid repo/file_path: %s", repo_error)
+        return {"statusCode": 400, "body": repo_error}
+
     cognito_sub = event.get("cognito_sub")
 
     if not task_id:

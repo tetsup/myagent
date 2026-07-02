@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars and adjust before terraform apply.
+
+aws_region        = "us-east-1"
+project_name      = "myagent"
+bedrock_model_id  = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+lambda_timeout    = 300
+
+# Optional server-side fallbacks when the mobile UI omits repo / file_path.
+# default_repo      = "your-org/your-repo"
+# default_file_path = "src/main.py"

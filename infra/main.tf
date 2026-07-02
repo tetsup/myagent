@@ -47,6 +47,18 @@ variable "lambda_timeout" {
   default     = 300
 }
 
+variable "default_repo" {
+  description = "Fallback owner/repo when the client omits repo (e.g. octocat/Hello-World)"
+  type        = string
+  default     = ""
+}
+
+variable "default_file_path" {
+  description = "Fallback file path when the client omits file_path"
+  type        = string
+  default     = "src/main.py"
+}
+
 # ---------------------------------------------------------------------------
 # Unique suffix for globally-unique S3 bucket name
 # ---------------------------------------------------------------------------
@@ -160,7 +172,7 @@ resource "aws_cognito_user_pool_client" "app" {
 # 4. DynamoDB — task log cache (polled by mobile clients)
 # ---------------------------------------------------------------------------
 resource "aws_dynamodb_table" "logs" {
-  name         = "myagent-logs"
+  name         = "${var.project_name}-logs"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "task_id"
 
@@ -358,8 +370,8 @@ resource "aws_lambda_function" "agent" {
       GITHUB_TOKEN_SSM  = aws_ssm_parameter.github_token.name
       BEDROCK_MODEL_ID  = var.bedrock_model_id
       BEDROCK_REGION    = var.aws_region
-      DEFAULT_REPO      = "your-user/your-repo"
-      DEFAULT_FILE_PATH = "src/main.py"
+      DEFAULT_REPO      = var.default_repo
+      DEFAULT_FILE_PATH = var.default_file_path
       LOGS_TABLE        = aws_dynamodb_table.logs.name
     }
   }

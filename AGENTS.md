@@ -9,7 +9,7 @@ getting started, and development workflow.
 
 | Component | Where | Notes |
 |---|---|---|
-| AWS stack | `infra/` (Terraform) | API Gateway, Lambda, Cognito, DynamoDB, S3, SSM — deploy with `terraform apply` |
+| AWS stack | `infra/` (Terraform) | API Gateway, Lambda, Cognito, DynamoDB, S3, SSM — copy `terraform.tfvars.example` → `terraform.tfvars`, then `terraform apply` |
 | agent Lambda | `packages/agent-lambda` | Python; redeploy via `terraform apply` after edits |
 | mobile UI | `packages/web-ui` | Local Vite dev server; talks to deployed API Gateway |
 

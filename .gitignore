@@ -1,5 +1,11 @@
 node_modules
 dist
-.turbo
 .env
 .DS_Store
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+infra/lambda_function.zip
+infra/terraform.tfvars
