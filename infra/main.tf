@@ -344,6 +344,7 @@ resource "aws_apigatewayv2_api" "http_api" {
     allow_origins = ["*"]
     allow_methods = ["POST", "OPTIONS"]
     allow_headers = ["content-type", "authorization"]
+    max_age       = 300
   }
 }
 
