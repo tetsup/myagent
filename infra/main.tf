@@ -157,7 +157,21 @@ resource "aws_cognito_user_pool_client" "app" {
 }
 
 # ---------------------------------------------------------------------------
-# 4. CloudWatch Log Groups
+# 4. DynamoDB — task log cache (polled by mobile clients)
+# ---------------------------------------------------------------------------
+resource "aws_dynamodb_table" "logs" {
+  name         = "mini-cursor-logs"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "task_id"
+
+  attribute {
+    name = "task_id"
+    type = "S"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# 5. CloudWatch Log Groups
 # ---------------------------------------------------------------------------
 resource "aws_cloudwatch_log_group" "lambda_logs" {
   name              = "/aws/lambda/${var.project_name}-agent"
@@ -170,7 +184,7 @@ resource "aws_cloudwatch_log_group" "api_access_logs" {
 }
 
 # ---------------------------------------------------------------------------
-# 5. IAM role for Lambda
+# 6. IAM role for Lambda
 # ---------------------------------------------------------------------------
 data "aws_iam_policy_document" "lambda_assume_role" {
   statement {
@@ -241,6 +255,28 @@ data "aws_iam_policy_document" "lambda_policy" {
       "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}",
     ]
   }
+
+  # DynamoDB — task log cache (append progress, read status)
+  statement {
+    sid    = "DynamoDBLogsCache"
+    effect = "Allow"
+    actions = [
+      "dynamodb:PutItem",
+      "dynamodb:GetItem",
+      "dynamodb:UpdateItem",
+    ]
+    resources = [aws_dynamodb_table.logs.arn]
+  }
+
+  # Async self-invocation for background task processing after 202 Accepted
+  statement {
+    sid    = "LambdaSelfInvoke"
+    effect = "Allow"
+    actions = [
+      "lambda:InvokeFunction",
+    ]
+    resources = ["arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}-agent"]
+  }
 }
 
 resource "aws_iam_role_policy" "lambda_policy" {
@@ -250,7 +286,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
 }
 
 # ---------------------------------------------------------------------------
-# 6. IAM role for API Gateway → CloudWatch Logs (access logs)
+# 7. IAM role for API Gateway → CloudWatch Logs (access logs)
 # ---------------------------------------------------------------------------
 data "aws_iam_policy_document" "apigw_assume_role" {
   statement {
@@ -295,7 +331,7 @@ resource "aws_api_gateway_account" "main" {
 }
 
 # ---------------------------------------------------------------------------
-# 7. Lambda deployment package
+# 8. Lambda deployment package
 # ---------------------------------------------------------------------------
 data "archive_file" "lambda_zip" {
   type        = "zip"
@@ -304,7 +340,7 @@ data "archive_file" "lambda_zip" {
 }
 
 # ---------------------------------------------------------------------------
-# 8. Orchestrator Lambda function
+# 9. Orchestrator Lambda function
 # ---------------------------------------------------------------------------
 resource "aws_lambda_function" "agent" {
   filename         = data.archive_file.lambda_zip.output_path
@@ -324,6 +360,7 @@ resource "aws_lambda_function" "agent" {
       BEDROCK_REGION    = var.aws_region
       DEFAULT_REPO      = "your-user/your-repo"
       DEFAULT_FILE_PATH = "src/main.py"
+      LOGS_TABLE        = aws_dynamodb_table.logs.name
     }
   }
 
@@ -334,7 +371,7 @@ resource "aws_lambda_function" "agent" {
 }
 
 # ---------------------------------------------------------------------------
-# 9. API Gateway HTTP API (Cognito JWT protected)
+# 10. API Gateway HTTP API (Cognito JWT protected)
 # ---------------------------------------------------------------------------
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "${var.project_name}-api"
@@ -342,7 +379,7 @@ resource "aws_apigatewayv2_api" "http_api" {
 
   cors_configuration {
     allow_origins = ["*"]
-    allow_methods = ["POST", "OPTIONS"]
+    allow_methods = ["GET", "POST", "OPTIONS"]
     allow_headers = ["content-type", "authorization"]
     max_age       = 300
   }
@@ -370,6 +407,14 @@ resource "aws_apigatewayv2_integration" "lambda" {
 resource "aws_apigatewayv2_route" "agent_post" {
   api_id             = aws_apigatewayv2_api.http_api.id
   route_key          = "POST /agent"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
+}
+
+resource "aws_apigatewayv2_route" "status_get" {
+  api_id             = aws_apigatewayv2_api.http_api.id
+  route_key          = "GET /status"
   target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
@@ -423,6 +468,16 @@ resource "aws_lambda_permission" "apigw" {
 output "api_endpoint" {
   description = "POST instructions to this URL (requires Cognito JWT)"
   value       = "${aws_apigatewayv2_api.http_api.api_endpoint}/agent"
+}
+
+output "status_endpoint" {
+  description = "Poll task progress: GET ?task_id=<uuid> (requires Cognito JWT)"
+  value       = "${aws_apigatewayv2_api.http_api.api_endpoint}/status"
+}
+
+output "logs_table_name" {
+  description = "DynamoDB table for task log cache"
+  value       = aws_dynamodb_table.logs.name
 }
 
 output "cognito_user_pool_id" {
