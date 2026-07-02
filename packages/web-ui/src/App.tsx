@@ -222,12 +222,38 @@ function truncateToken(token: string): string {
   return `${token.slice(0, 12)}...${token.slice(-8)}`;
 }
 
+function readStoredValue(key: string): string {
+  try {
+    return localStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredValue(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignore quota or privacy-mode errors.
+  }
+}
+
+function usePersistedState(storageKey: string): [string, (value: string) => void] {
+  const [value, setValue] = useState(() => readStoredValue(storageKey));
+
+  useEffect(() => {
+    writeStoredValue(storageKey, value);
+  }, [storageKey, value]);
+
+  return [value, setValue];
+}
+
 export function App() {
-  const [userPoolId, setUserPoolId] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [username, setUsername] = useState("");
+  const [userPoolId, setUserPoolId] = usePersistedState(STORAGE_KEYS.userPoolId);
+  const [clientId, setClientId] = usePersistedState(STORAGE_KEYS.clientId);
+  const [username, setUsername] = usePersistedState(STORAGE_KEYS.username);
   const [password, setPassword] = useState("");
-  const [apiUrl, setApiUrl] = useState("");
+  const [apiUrl, setApiUrl] = usePersistedState(STORAGE_KEYS.apiUrl);
   const [instruction, setInstruction] = useState("");
   const [idToken, setIdToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -250,16 +276,7 @@ export function App() {
   );
 
   useEffect(() => {
-    const savedUserPoolId = localStorage.getItem(STORAGE_KEYS.userPoolId) ?? "";
-    const savedClientId = localStorage.getItem(STORAGE_KEYS.clientId) ?? "";
-    const savedApiUrl = localStorage.getItem(STORAGE_KEYS.apiUrl) ?? "";
-    const savedUsername = localStorage.getItem(STORAGE_KEYS.username) ?? "";
-    const savedIdToken = localStorage.getItem(STORAGE_KEYS.idToken);
-
-    setUserPoolId(savedUserPoolId);
-    setClientId(savedClientId);
-    setApiUrl(savedApiUrl);
-    setUsername(savedUsername);
+    const savedIdToken = readStoredValue(STORAGE_KEYS.idToken);
     if (savedIdToken) {
       setIdToken(savedIdToken);
     }
@@ -310,10 +327,7 @@ export function App() {
         const token = session.getIdToken().getJwtToken();
         setIdToken(token);
         setPassword("");
-        localStorage.setItem(STORAGE_KEYS.userPoolId, trimmedPoolId);
-        localStorage.setItem(STORAGE_KEYS.clientId, trimmedClientId);
-        localStorage.setItem(STORAGE_KEYS.username, trimmedUsername);
-        localStorage.setItem(STORAGE_KEYS.idToken, token);
+        writeStoredValue(STORAGE_KEYS.idToken, token);
         appendLog("success", "cognito", `Login successful — ID token acquired (${truncateToken(token)})`);
         appendLog("info", "cloudwatch", `[${formatTimestamp(new Date())}] cognito-idp: InitiateAuth succeeded for ${trimmedUsername}`);
         setIsLoggingIn(false);
@@ -338,7 +352,11 @@ export function App() {
   const handleLogout = useCallback(() => {
     setIdToken(null);
     setPassword("");
-    localStorage.removeItem(STORAGE_KEYS.idToken);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.idToken);
+    } catch {
+      // Ignore privacy-mode errors.
+    }
     appendLog("info", "cognito", "Logged out — ID token cleared from local storage");
   }, [appendLog]);
 
@@ -362,7 +380,6 @@ export function App() {
     }
 
     setIsSubmitting(true);
-    localStorage.setItem(STORAGE_KEYS.apiUrl, trimmedApiUrl);
 
     const requestId = `req-${Date.now().toString(36)}`;
     appendLog("info", "api", `[${requestId}] POST ${trimmedApiUrl}`);
