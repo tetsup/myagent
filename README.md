@@ -10,7 +10,7 @@ and opens a pull request — all behind Cognito-authenticated API Gateway.
 
 ```
 ┌──────────────┐  Cognito JWT   ┌──────────────┐   invoke   ┌─────────────────┐
-│  web-ui       │ ─────────────▶ │  API Gateway  │ ─────────▶ │  agent (Lambda)  │
+│  web          │ ─────────────▶ │  API Gateway  │ ─────────▶ │  agent (Lambda)  │
 │  React+Vite   │  POST /agent   │  HTTP API     │            │  Python 3.11     │
 │  (phone)      │  GET /status   │  + JWT auth   │            └────────┬────────┘
 └──────────────┘                └──────────────┘                     │
@@ -24,9 +24,9 @@ and opens a pull request — all behind Cognito-authenticated API Gateway.
 
 | Package | Path | Stack | Role |
 |---|---|---|---|
-| `@myagent/web-ui` | `packages/web-ui` | React 19 + Vite | Mobile console — Cognito login, send instructions, poll task logs |
-| agent Lambda | `packages/agent-lambda` | Python 3.11 | Bedrock code generation, GitHub branch/commit/PR automation |
-| Terraform | `infra/` | Terraform | AWS resources (API Gateway, Lambda, Cognito, DynamoDB, S3, SSM) |
+| `@myagent/web` | `apps/web` | React 19 + Vite | Mobile console — Cognito login, send instructions, poll task logs |
+| agent Lambda | `apps/agent` | Python 3.11 | Bedrock code generation, GitHub branch/commit/PR automation |
+| Terraform | `infra/terraform` | Terraform | AWS resources (API Gateway, Lambda, Cognito, DynamoDB, S3, SSM) |
 
 **Request flow**
 
@@ -39,10 +39,10 @@ and opens a pull request — all behind Cognito-authenticated API Gateway.
 
 ### 1. Deploy the infrastructure
 
-Run Terraform in `infra/` and save the output values.
+Run Terraform in `infra/terraform/` and save the output values.
 
 ```bash
-cd infra
+cd infra/terraform
 terraform init
 terraform apply
 ```
@@ -109,7 +109,7 @@ From the repo root, start the mobile UI dev server (`host: true` allows access f
 
 ```bash
 pnpm install
-pnpm --filter @myagent/web-ui dev
+pnpm --filter @myagent/web dev
 ```
 
 Open the URL shown in the terminal (e.g. `http://192.168.x.x:5174`) on your phone and log in with the values from step 1:
@@ -132,13 +132,13 @@ Requires Node 22 + pnpm 10 (via corepack). Terraform >= 1.5 for infrastructure c
 
 ```bash
 pnpm install
-pnpm dev          # alias for @myagent/web-ui dev (port 5174)
-pnpm check        # TypeScript check on web-ui
+pnpm dev          # alias for @myagent/web dev (port 5174)
+pnpm check        # TypeScript check on apps/web
 ```
 
-After editing `packages/agent-lambda/index.py`, redeploy with `terraform apply` in `infra/` so the Lambda zip is rebuilt.
+After editing `apps/agent/index.py`, redeploy with `terraform apply` in `infra/terraform/` so the Lambda zip is rebuilt.
 
-### Infrastructure variables (`infra/`)
+### Infrastructure variables (`infra/terraform/`)
 
 | Variable | Default | Description |
 |---|---|---|

@@ -347,7 +347,7 @@ resource "aws_api_gateway_account" "main" {
 # ---------------------------------------------------------------------------
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_file = "${path.module}/../packages/agent-lambda/index.py"
+  source_file = "${path.module}/../../apps/agent/index.py"
   output_path = "${path.module}/lambda_function.zip"
 }
 

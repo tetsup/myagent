@@ -7,5 +7,5 @@ dist
 .terraform/
 *.tfstate
 *.tfstate.*
-infra/lambda_function.zip
-infra/terraform.tfvars
+infra/terraform/lambda_function.zip
+infra/terraform/terraform.tfvars
