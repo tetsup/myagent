@@ -1,5 +1,7 @@
 # myagent
 
+> **日本語:** [README.ja.md](./README.ja.md)
+
 A Cursor-like, GitHub-integrated development agent. A user submits a task
 ("do X in repo Y"); the platform clones the repository, asks a language model
 for a structured plan, and surfaces the result in a web dashboard. The language
@@ -61,13 +63,13 @@ Repo-wide tasks (via turbo): `pnpm build`, `pnpm lint`, `pnpm test`,
 `deploy/docker-compose.yml` runs the whole stack plus Ollama; `deploy/k8s/`
 contains Kubernetes manifests. See `deploy/.env.example` for model config.
 
-## mini-cursor（AWS）使い方
+## mini-cursor (AWS) — Getting started
 
-スマホから Cognito 認証付き API Gateway 経由でエージェントを操作するための手順です。
+Use this flow to operate the agent from a phone over Cognito-authenticated API Gateway.
 
-### 1. インフラをデプロイする
+### 1. Deploy the infrastructure
 
-`infra/` で Terraform を実行し、出力される値をメモします。
+Run Terraform in `infra/` and save the output values.
 
 ```bash
 cd infra
@@ -75,28 +77,28 @@ terraform init
 terraform apply
 ```
 
-`apply` 完了後、画面に表示される次の値を控えておきます。
+After `apply` completes, note these outputs:
 
-| 出力名 | 用途 |
+| Output | Use |
 |---|---|
-| `cognito_user_pool_id` | Web UI の **User Pool ID** |
-| `cognito_user_pool_client_id` | Web UI の **App Client ID** |
-| `api_endpoint` | Web UI の **API Gateway URL**（`POST /agent`） |
-| `status_endpoint` | タスク進捗のポーリング先（`GET /status`） |
-| `github_token_ssm_parameter` | 次のステップで上書きする SSM パラメータ名 |
+| `cognito_user_pool_id` | Web UI **User Pool ID** |
+| `cognito_user_pool_client_id` | Web UI **App Client ID** |
+| `api_endpoint` | Web UI **API Gateway URL** (`POST /agent`) |
+| `status_endpoint` | Task progress polling (`GET /status`) |
+| `github_token_ssm_parameter` | SSM parameter name to overwrite in the next step |
 
-### 2. 秘密の鍵とユーザーを AWS CLI でセットする
+### 2. Set secrets and users with the AWS CLI
 
-GitHub トークンは SSM Parameter Store に置き、Cognito ユーザーは CLI から作成します。トークンをシェル履歴やチャットに貼らないよう、以下の 3 コマンドだけで済ませます。
+Store the GitHub token in SSM Parameter Store and create the Cognito user from the CLI. Use only the three commands below so the token never ends up in shell history or chat logs.
 
-`terraform apply` の出力値を環境変数に入れてから実行してください（例は `us-east-1`）。
+Export values from `terraform apply` first (example region: `us-east-1`):
 
 ```bash
 export AWS_REGION=us-east-1
-export USER_POOL_ID=<cognito_user_pool_id の値>
+export USER_POOL_ID=<value of cognito_user_pool_id>
 ```
 
-**① GitHub PAT を SSM に上書きする**
+**① Overwrite the GitHub PAT in SSM**
 
 ```bash
 aws ssm put-parameter \
@@ -107,7 +109,7 @@ aws ssm put-parameter \
   --region "$AWS_REGION"
 ```
 
-**② スマホ用 Cognito ユーザーを作成する（`tetsup-phone`）**
+**② Create the mobile Cognito user (`tetsup-phone`)**
 
 ```bash
 aws cognito-idp admin-create-user \
@@ -118,9 +120,9 @@ aws cognito-idp admin-create-user \
   --region "$AWS_REGION"
 ```
 
-**③ 永続パスワードを設定する**
+**③ Set a permanent password**
 
-Cognito のパスワードポリシー（8 文字以上・大文字・小文字・数字）に合わせてください。
+Must satisfy the Cognito password policy (8+ chars, upper, lower, number).
 
 ```bash
 aws cognito-idp admin-set-user-password \
@@ -131,23 +133,23 @@ aws cognito-idp admin-set-user-password \
   --region "$AWS_REGION"
 ```
 
-### 3. フロントエンドを起動してスマホからログインする
+### 3. Start the frontend and log in from your phone
 
-リポジトリ直下でモバイル UI の開発サーバーを起動します（`host: true` のため同一 LAN 内のスマホからアクセス可能）。
+From the repo root, start the mobile UI dev server (`host: true` allows access from phones on the same LAN):
 
 ```bash
 pnpm install
 pnpm --filter @mini-cursor/web-ui dev
 ```
 
-ターミナルに表示される URL（例: `http://192.168.x.x:5174`）をスマホのブラウザで開き、ステップ 1 でメモした値を入力してログインします。
+Open the URL shown in the terminal (e.g. `http://192.168.x.x:5174`) on your phone and log in with the values from step 1:
 
-| フィールド | 入力する値 |
+| Field | Value |
 |---|---|
 | User Pool ID | `cognito_user_pool_id` |
 | App Client ID | `cognito_user_pool_client_id` |
 | Username | `tetsup-phone` |
-| Password | ステップ 2 で設定したパスワード |
+| Password | Password set in step 2 |
 | API Gateway URL | `api_endpoint` |
 
-ログイン後、自然言語の指示を送信すると API Gateway 経由で Lambda エージェントが実行されます。
+After login, send a natural-language instruction and the Lambda agent runs via API Gateway.
